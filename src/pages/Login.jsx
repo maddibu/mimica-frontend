@@ -1,15 +1,16 @@
 import { useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 
 function Login() {
   const location = useLocation();
   const [modo, setModo] = useState(location.state?.modo || "ingresar");
+  const navigate = useNavigate();
 
   return (
     <div style={styles.page}>
       {/* Logo */}
       <div style={styles.logoPlaceholder}>
-        <span style={styles.imgText}>Logo aquí</span>
+        <span style={styles.imgText}>Logo</span>
       </div>
 
       <h1 style={styles.title}>Mímica</h1>
@@ -43,13 +44,18 @@ function Login() {
         </button>
 
         {modo === "ingresar" && (
-          <a href="#" style={styles.link}>
+          <a onClick={() => navigate("/forgot-password")} style={styles.link}>
             Olvidé la contraseña
           </a>
         )}
       </div>
 
-      <button style={styles.btnSinCuenta}>Continuar sin cuenta</button>
+      <button
+        style={styles.btnSinCuenta}
+        onClick={() => navigate("/dashboard")}
+      >
+        Continuar sin cuenta
+      </button>
     </div>
   );
 }
@@ -142,6 +148,8 @@ const styles = {
     color: "#333",
     textAlign: "left",
     marginTop: "0.25rem",
+    textDecoration: "underline",
+    cursor: "pointer",
   },
   btnSinCuenta: {
     padding: "0.6rem 1.5rem",

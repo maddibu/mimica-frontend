@@ -9,7 +9,7 @@ function Landing() {
         {/* Columna izquierda */}
         <div style={styles.left}>
           <div style={styles.imgPlaceholder}>
-            <span style={styles.imgText}>Imagen aquí</span>
+            <span style={styles.imgText}>Imagen</span>
           </div>
 
           <h1 style={styles.title}>Mímica</h1>
@@ -36,7 +36,7 @@ function Landing() {
         {/* Columna derecha */}
         <div style={styles.right}>
           <div style={styles.logoPlaceholder}>
-            <span style={styles.imgText}>Logo aquí</span>
+            <span style={styles.imgText}>Logo</span>
           </div>
 
           <button

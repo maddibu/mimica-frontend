@@ -1,9 +1,12 @@
 import { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 
 function Dashboard() {
   const [libros, setLibros] = useState([]);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef();
+  const navigate = useNavigate();
+  const [libroAbierto, setLibroAbierto] = useState(null);
 
   const agregarArchivos = (files) => {
     const validos = Array.from(files).filter(
@@ -13,6 +16,7 @@ function Dashboard() {
       id: Date.now() + Math.random(),
       nombre: f.name,
       tipo: f.name.endsWith(".epub") ? "epub" : "pdf",
+      url: URL.createObjectURL(f),
     }));
     setLibros((prev) => [...prev, ...nuevos]);
   };
@@ -23,13 +27,30 @@ function Dashboard() {
     agregarArchivos(e.dataTransfer.files);
   };
 
+  if (libroAbierto) {
+    return (
+      <div style={styles.lector}>
+        <button style={styles.btnVolver} onClick={() => setLibroAbierto(null)}>
+          ← Volver a la biblioteca
+        </button>
+        <iframe
+          src={libroAbierto.url}
+          style={styles.iframe}
+          title={libroAbierto.nombre}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={styles.page}>
       {/* Nav */}
       <nav style={styles.nav}>
         <div style={styles.navLogo}>
           <div style={styles.logoPlaceholder}>Logo</div>
-          <span style={styles.navNombre}>Mímica</span>
+          <span style={styles.navNombre} onClick={() => navigate("/")}>
+            Mímica
+          </span>
         </div>
       </nav>
 
@@ -52,7 +73,11 @@ function Dashboard() {
         >
           {/* Tarjetas de libros */}
           {libros.map((libro) => (
-            <div key={libro.id} style={styles.tarjeta}>
+            <div
+              key={libro.id}
+              style={styles.tarjeta}
+              onClick={() => setLibroAbierto(libro)}
+            >
               <span style={styles.tipoTag}>{libro.tipo.toUpperCase()}</span>
               <span style={styles.nombreLibro}>{libro.nombre}</span>
             </div>
@@ -153,6 +178,7 @@ const styles = {
     gap: "0.5rem",
     padding: "0.5rem",
     background: "#fafafa",
+    cursor: "pointer",
   },
   tipoTag: {
     fontSize: "0.6rem",
@@ -188,6 +214,32 @@ const styles = {
     marginTop: "1rem",
     fontSize: "0.75rem",
     color: "#aaa",
+  },
+  lector: {
+    height: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    background: "#fff",
+  },
+  btnVolver: {
+    padding: "0.6rem 1.2rem",
+    background: "#111",
+    color: "#fff",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "0.85rem",
+    alignSelf: "flex-start",
+    margin: "0.75rem",
+  },
+  iframe: {
+    flex: 1,
+    border: "none",
+    width: "100%",
+  },
+  navNombre: {
+    fontSize: "1rem",
+    fontWeight: "bold",
+    cursor: "pointer",
   },
 };
 
