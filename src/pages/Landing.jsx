@@ -48,7 +48,14 @@ function Landing() {
           <button style={styles.btnPrimary} onClick={() => navigate("/login")}>
             Iniciar sesión
           </button>
-          <button style={styles.btnOutline}>Registrarte</button>
+          <button
+            style={styles.btnOutline}
+            onClick={() =>
+              navigate("/login", { state: { modo: "registrarse" } })
+            }
+          >
+            Registrarte
+          </button>
         </div>
       </div>
     </div>

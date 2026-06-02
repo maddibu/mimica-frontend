@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useLocation } from "react-router-dom";
 
 function Login() {
-  const [modo, setModo] = useState("ingresar");
+  const location = useLocation();
+  const [modo, setModo] = useState(location.state?.modo || "ingresar");
 
   return (
     <div style={styles.page}>
