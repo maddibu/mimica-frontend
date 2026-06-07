@@ -1,7 +1,14 @@
 import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+import { useAuth } from "../context/AuthContext";
 
 function Landing() {
   const navigate = useNavigate();
+  const { token } = useAuth();
+
+  useEffect(() => {
+    if (token) navigate("/dashboard");
+  }, [token]);
 
   return (
     <div style={styles.page}>

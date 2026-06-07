@@ -1,30 +1,73 @@
-import { useState, useRef } from "react";
+// src/pages/Dashboard.jsx
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { listarDocumentos, subirDocumento, eliminarDocumento } from "../api";
+import { useAuth } from "../context/AuthContext";
 
 function Dashboard() {
   const [libros, setLibros] = useState([]);
   const [dragging, setDragging] = useState(false);
+  const [libroAbierto, setLibroAbierto] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
   const inputRef = useRef();
   const navigate = useNavigate();
-  const [libroAbierto, setLibroAbierto] = useState(null);
+  const { token, cerrarSesion } = useAuth();
 
-  const agregarArchivos = (files) => {
+  // Cargar documentos al entrar
+  useEffect(() => {
+    if (!token) return;
+    listarDocumentos()
+      .then((data) => setLibros(data))
+      .catch((e) => setError(e.message))
+      .finally(() => setCargando(false));
+  }, [token]);
+
+  const agregarArchivos = async (files) => {
     const validos = Array.from(files).filter(
       (f) => f.type === "application/pdf" || f.name.endsWith(".epub"),
     );
-    const nuevos = validos.map((f) => ({
-      id: Date.now() + Math.random(),
-      nombre: f.name,
-      tipo: f.name.endsWith(".epub") ? "epub" : "pdf",
-      url: URL.createObjectURL(f),
-    }));
-    setLibros((prev) => [...prev, ...nuevos]);
+
+    for (const f of validos) {
+      const tipo = f.name.endsWith(".epub") ? "epub" : "pdf";
+      const urlLocal = URL.createObjectURL(f);
+
+      if (token) {
+        try {
+          const nuevo = await subirDocumento(f.name, tipo, urlLocal);
+          setLibros((prev) => [...prev, { ...nuevo, url: urlLocal }]);
+        } catch (e) {
+          setError(`Error al subir ${f.name}: ${e.message}`);
+        }
+      } else {
+        // modo invitado — solo local
+        setLibros((prev) => [
+          ...prev,
+          {
+            id: Date.now() + Math.random(),
+            nombre: f.name,
+            tipo,
+            url: urlLocal,
+          },
+        ]);
+      }
+    }
   };
 
   const onDrop = (e) => {
     e.preventDefault();
     setDragging(false);
     agregarArchivos(e.dataTransfer.files);
+  };
+
+  const handleEliminar = async (e, id) => {
+    e.stopPropagation();
+    try {
+      await eliminarDocumento(id);
+      setLibros((prev) => prev.filter((l) => l.id !== id));
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   if (libroAbierto) {
@@ -52,11 +95,25 @@ function Dashboard() {
             Mímica
           </span>
         </div>
+        {token && (
+          <button
+            style={styles.btnCerrarSesion}
+            onClick={() => {
+              cerrarSesion();
+              navigate("/login");
+            }}
+          >
+            Cerrar sesión
+          </button>
+        )}
       </nav>
 
       {/* Contenido */}
       <div style={styles.contenido}>
         <h2 style={styles.titulo}>Biblioteca</h2>
+
+        {error && <p style={styles.error}>{error}</p>}
+        {cargando && <p style={styles.hint}>Cargando biblioteca...</p>}
 
         {/* Grid */}
         <div
@@ -71,15 +128,22 @@ function Dashboard() {
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
         >
-          {/* Tarjetas de libros */}
           {libros.map((libro) => (
             <div
               key={libro.id}
               style={styles.tarjeta}
               onClick={() => setLibroAbierto(libro)}
             >
-              <span style={styles.tipoTag}>{libro.tipo.toUpperCase()}</span>
+              <span style={styles.tipoTag}>
+                {(libro.tipo || "pdf").toUpperCase()}
+              </span>
               <span style={styles.nombreLibro}>{libro.nombre}</span>
+              <button
+                style={styles.btnEliminar}
+                onClick={(e) => handleEliminar(e, libro.id)}
+              >
+                ✕
+              </button>
             </div>
           ))}
 
@@ -91,7 +155,6 @@ function Dashboard() {
             <span style={styles.mas}>+</span>
           </button>
 
-          {/* Input oculto */}
           <input
             ref={inputRef}
             type="file"
@@ -102,8 +165,7 @@ function Dashboard() {
           />
         </div>
 
-        {/* Hint drag and drop */}
-        {libros.length === 0 && (
+        {!cargando && libros.length === 0 && (
           <p style={styles.hint}>
             También puedes arrastrar archivos PDF o EPUB aquí
           </p>
@@ -123,6 +185,7 @@ const styles = {
   nav: {
     display: "flex",
     alignItems: "center",
+    justifyContent: "space-between",
     padding: "0.75rem 1.5rem",
     borderBottom: "1px solid #eee",
   },
@@ -146,6 +209,16 @@ const styles = {
   navNombre: {
     fontSize: "1rem",
     fontWeight: "bold",
+    cursor: "pointer",
+  },
+  btnCerrarSesion: {
+    padding: "0.4rem 0.9rem",
+    background: "none",
+    border: "1px solid #ccc",
+    borderRadius: "2px",
+    fontSize: "0.8rem",
+    cursor: "pointer",
+    color: "#555",
   },
   contenido: {
     padding: "2rem",
@@ -155,6 +228,11 @@ const styles = {
     fontSize: "1.3rem",
     fontWeight: "bold",
     marginBottom: "1.5rem",
+  },
+  error: {
+    fontSize: "0.8rem",
+    color: "#c00",
+    marginBottom: "1rem",
   },
   grid: {
     display: "flex",
@@ -179,6 +257,7 @@ const styles = {
     padding: "0.5rem",
     background: "#fafafa",
     cursor: "pointer",
+    position: "relative",
   },
   tipoTag: {
     fontSize: "0.6rem",
@@ -193,6 +272,18 @@ const styles = {
     color: "#333",
     textAlign: "center",
     wordBreak: "break-word",
+  },
+  btnEliminar: {
+    position: "absolute",
+    top: "4px",
+    right: "4px",
+    background: "none",
+    border: "none",
+    fontSize: "0.65rem",
+    color: "#aaa",
+    cursor: "pointer",
+    padding: "0",
+    lineHeight: 1,
   },
   btnAgregar: {
     width: "100px",
@@ -235,11 +326,6 @@ const styles = {
     flex: 1,
     border: "none",
     width: "100%",
-  },
-  navNombre: {
-    fontSize: "1rem",
-    fontWeight: "bold",
-    cursor: "pointer",
   },
 };
 

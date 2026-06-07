@@ -1,46 +1,124 @@
+// src/pages/Login.jsx
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { login as apiLogin, register as apiRegister } from "../api";
+import { useAuth } from "../context/AuthContext";
 
 function Login() {
   const location = useLocation();
   const [modo, setModo] = useState(location.state?.modo || "ingresar");
   const navigate = useNavigate();
+  const { guardarSesion } = useAuth();
+
+  const [nombre, setNombre] = useState("");
+  const [email, setEmail] = useState("");
+  const [contrasena, setContrasena] = useState("");
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+
+  const handleSubmit = async () => {
+    console.log("1. inicio handleSubmit", { email, contrasena });
+    setError("");
+    if (modo === "ingresar" && (!email || !contrasena)) {
+      console.log("2. campos vacíos");
+      setError("Por favor completa todos los campos.");
+      return;
+    }
+    console.log("3. pasó validación");
+    setCargando(true);
+    try {
+      console.log("4. antes del fetch");
+      const data =
+        modo === "ingresar"
+          ? await apiLogin(email, contrasena)
+          : await apiRegister(nombre, email, contrasena);
+      console.log("5. respuesta:", data);
+      guardarSesion(data.token, data.usuario);
+      navigate("/dashboard");
+    } catch (e) {
+      console.log("6. error:", e.message);
+      setError(e.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+  console.log("render Login", typeof handleSubmit);
 
   return (
     <div style={styles.page}>
-      {/* Logo */}
       <div style={styles.logoPlaceholder}>
         <span style={styles.imgText}>Logo</span>
       </div>
 
       <h1 style={styles.title}>Mímica</h1>
+      <p style={{ color: "red" }}>VERSION NUEVA</p>
 
-      {/* Tabs */}
       <div style={styles.tabs}>
         <button
           style={modo === "ingresar" ? styles.tabActivo : styles.tabInactivo}
-          onClick={() => setModo("ingresar")}
+          onClick={() => {
+            setModo("ingresar");
+            setError("");
+          }}
         >
           Ingresar
         </button>
         <button
           style={modo === "registrarse" ? styles.tabActivo : styles.tabInactivo}
-          onClick={() => setModo("registrarse")}
+          onClick={() => {
+            setModo("registrarse");
+            setError("");
+          }}
         >
           Registrarse
         </button>
       </div>
 
-      {/* Formulario */}
       <div style={styles.form}>
+        {modo === "registrarse" && (
+          <>
+            <label style={styles.label}>Nombre</label>
+            <input
+              style={styles.input}
+              type="text"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+            />
+          </>
+        )}
+
         <label style={styles.label}>Correo electrónico</label>
-        <input style={styles.input} type="email" />
+        <input
+          style={styles.input}
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
 
         <label style={styles.label}>Contraseña</label>
-        <input style={styles.input} type="password" />
+        <input
+          style={styles.input}
+          type="password"
+          value={contrasena}
+          onChange={(e) => setContrasena(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+        />
 
-        <button style={styles.btnSubmit}>
-          {modo === "ingresar" ? "Entrar" : "Registrar"}
+        {error && <p style={styles.error}>{error}</p>}
+
+        <button
+          style={{ ...styles.btnSubmit, opacity: cargando ? 0.6 : 1 }}
+          onClick={() => {
+            console.log("click!");
+            handleSubmit();
+          }}
+          disabled={cargando}
+        >
+          {cargando
+            ? "Cargando..."
+            : modo === "ingresar"
+              ? "Entrar"
+              : "Registrar"}
         </button>
 
         {modo === "ingresar" && (
@@ -131,6 +209,12 @@ const styles = {
     borderRadius: "2px",
     fontSize: "0.9rem",
     marginBottom: "0.5rem",
+    boxSizing: "border-box",
+  },
+  error: {
+    fontSize: "0.8rem",
+    color: "#c00",
+    margin: "0",
   },
   btnSubmit: {
     width: "100%",
