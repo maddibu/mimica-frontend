@@ -1,5 +1,6 @@
 // src/pages/Dashboard.jsx
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useHeadGesture } from "../hooks/useGestureDetection";
 import { useNavigate } from "react-router-dom";
 import { listarDocumentos, subirDocumento, eliminarDocumento } from "../api";
 import { useAuth } from "../context/AuthContext";
@@ -13,7 +14,39 @@ function Dashboard() {
   const inputRef = useRef();
   const navigate = useNavigate();
   const { token, cerrarSesion } = useAuth();
+  const [focusedIndex, setFocusedIndex] = useState(null);
 
+  // El último nodo es siempre el botón "agregar"
+  const totalNodes = libros.length + 1;
+  const addButtonIndex = libros.length;
+
+  const handleGesture = useCallback(
+    (gesture) => {
+      setFocusedIndex((prev) => {
+        const current = prev ?? 0;
+
+        if (gesture === "HEAD_RIGHT") {
+          return Math.min(current + 1, totalNodes - 1);
+        }
+        if (gesture === "HEAD_LEFT") {
+          return Math.max(current - 1, 0);
+        }
+        if (gesture === "HEAD_DOWN") {
+          // Abrir documento enfocado
+          if (current === addButtonIndex) {
+            inputRef.current?.click();
+          } else if (libros[current]) {
+            setLibroAbierto(libros[current]);
+          }
+          return current;
+        }
+        return current;
+      });
+    },
+    [totalNodes, addButtonIndex, libros],
+  );
+
+  useHeadGesture({ onGesture: handleGesture, enabled: true });
   // Cargar documentos al entrar
   useEffect(() => {
     if (!token) return;
@@ -22,6 +55,10 @@ function Dashboard() {
       .catch((e) => setError(e.message))
       .finally(() => setCargando(false));
   }, [token]);
+
+  useEffect(() => {
+    setFocusedIndex(null);
+  }, [libros.length]);
 
   const agregarArchivos = async (files) => {
     const validos = Array.from(files).filter(
@@ -71,13 +108,14 @@ function Dashboard() {
   };
 
   if (libroAbierto) {
+    console.log("URL del libro:", libroAbierto.url, libroAbierto);
     return (
       <div style={styles.lector}>
         <button style={styles.btnVolver} onClick={() => setLibroAbierto(null)}>
           ← Volver a la biblioteca
         </button>
         <iframe
-          src={libroAbierto.url}
+          src={libroAbierto.ruta_archivo || libroAbierto.url}
           style={styles.iframe}
           title={libroAbierto.nombre}
         />
@@ -89,12 +127,6 @@ function Dashboard() {
     <div style={styles.page}>
       {/* Nav */}
       <nav style={styles.nav}>
-        <div style={styles.navLogo}>
-          <div style={styles.logoPlaceholder}>Logo</div>
-          <span style={styles.navNombre} onClick={() => navigate("/")}>
-            Mímica
-          </span>
-        </div>
         {token && (
           <button
             style={styles.btnCerrarSesion}
@@ -128,12 +160,19 @@ function Dashboard() {
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
         >
-          {libros.map((libro) => (
+          {libros.map((libro, index) => (
             <div
               key={libro.id}
-              style={styles.tarjeta}
+              style={{
+                ...styles.tarjeta,
+                borderColor: focusedIndex === index ? "#1D9E75" : "#ddd",
+                borderWidth: focusedIndex === index ? "2px" : "1px",
+                boxShadow:
+                  focusedIndex === index ? "0 0 0 3px #1D9E7522" : "none",
+              }}
               onClick={() => setLibroAbierto(libro)}
             >
+              {focusedIndex === index && <div style={styles.focusBarTop} />}
               <span style={styles.tipoTag}>
                 {(libro.tipo || "pdf").toUpperCase()}
               </span>
@@ -149,9 +188,22 @@ function Dashboard() {
 
           {/* Botón agregar */}
           <button
-            style={styles.btnAgregar}
+            style={{
+              ...styles.btnAgregar,
+              borderColor: focusedIndex === addButtonIndex ? "#1D9E75" : "#ccc",
+              borderWidth: focusedIndex === addButtonIndex ? "2px" : "1px",
+              boxShadow:
+                focusedIndex === addButtonIndex
+                  ? "0 0 0 3px #1D9E7522"
+                  : "none",
+              position: "relative",
+              overflow: "hidden",
+            }}
             onClick={() => inputRef.current.click()}
           >
+            {focusedIndex === addButtonIndex && (
+              <div style={styles.focusBarTop} />
+            )}
             <span style={styles.mas}>+</span>
           </button>
 
@@ -189,27 +241,20 @@ const styles = {
     padding: "0.75rem 1.5rem",
     borderBottom: "1px solid #eee",
   },
-  navLogo: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-  },
-  logoPlaceholder: {
-    width: "32px",
-    height: "32px",
-    background: "#f0f0f0",
-    border: "1px dashed #aaa",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "0.5rem",
-    color: "#999",
-    borderRadius: "2px",
-  },
   navNombre: {
     fontSize: "1rem",
     fontWeight: "bold",
     cursor: "pointer",
+  },
+  focusBarTop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "3px",
+    background: "#1D9E75",
+    borderRadius: "8px 8px 0 0",
+    zIndex: 1,
   },
   btnCerrarSesion: {
     padding: "0.4rem 0.9rem",
