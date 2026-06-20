@@ -1,5 +1,5 @@
 // src/components/T9Keyboard.jsx
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 
 const grupos = [
   { num: "1", letras: ["1", "a", "b", "c"] },
@@ -15,19 +15,27 @@ const grupos = [
 
 const simbolos = ["!", "?", "@", "#", "$", "%", "&", "*", ".", ",", "-", "_"];
 const dominios = ["@gmail.com", "@hotmail.com", "@outlook.com"];
+const CONFIRM_COOLDOWN = 400;
+const DWELL_TIME = 7000;
 
-function DwellKey({ onActivate, children, style, dwellColor = "#1D9E75" }) {
+function DwellKey({
+  onActivate,
+  children,
+  style,
+  dwellColor = "#1D9E75",
+  focused = false,
+}) {
   const barRef = useRef(null);
   const timerRef = useRef(null);
 
   const start = () => {
     if (!barRef.current) return;
-    barRef.current.style.transition = "width 1.2s linear";
+    barRef.current.style.transition = `width ${DWELL_TIME}ms linear`;
     barRef.current.style.width = "100%";
     timerRef.current = setTimeout(() => {
       onActivate();
       stop();
-    }, 1200);
+    }, DWELL_TIME);
   };
 
   const stop = () => {
@@ -37,11 +45,21 @@ function DwellKey({ onActivate, children, style, dwellColor = "#1D9E75" }) {
     clearTimeout(timerRef.current);
   };
 
+  // Solo el foco por gestos controla el dwell — sin onMouseEnter/Leave
+  useEffect(() => {
+    if (focused) start();
+    else stop();
+    return () => clearTimeout(timerRef.current);
+  }, [focused]);
+
   return (
     <button
-      style={{ ...styles.keyBase, ...style }}
-      onMouseEnter={start}
-      onMouseLeave={stop}
+      style={{
+        ...styles.keyBase,
+        ...style,
+        outline: focused ? "2px solid #1D9E75" : "none",
+        outlineOffset: focused ? "1px" : "0",
+      }}
     >
       {children}
       <div
@@ -52,10 +70,20 @@ function DwellKey({ onActivate, children, style, dwellColor = "#1D9E75" }) {
   );
 }
 
-function T9Keyboard({ onKey, onBackspace, onConfirm }) {
+// Recorta la columna al rango válido de la fila destino
+function clamp(grid, fila, col) {
+  const filaSegura = Math.max(0, Math.min(fila, grid.length - 1));
+  const colMax = grid[filaSegura].length - 1;
+  const colSegura = Math.max(0, Math.min(col, colMax));
+  return { fila: filaSegura, col: colSegura };
+}
+
+function T9Keyboard({ onKey, onBackspace, onConfirm, gesto }) {
   const [grupoActivo, setGrupoActivo] = useState(null);
   const [mostrarSimbolos, setMostrarSimbolos] = useState(false);
   const [capsMode, setCapsMode] = useState("off");
+  const [foco, setFoco] = useState({ fila: 0, col: 0 });
+  const ultimaConfirmacionRef = useRef(0);
 
   const applyCase = (letra) => {
     if (capsMode === "off") return letra;
@@ -66,6 +94,7 @@ function T9Keyboard({ onKey, onBackspace, onConfirm }) {
     onKey(applyCase(letra));
     setGrupoActivo(null);
     setMostrarSimbolos(false);
+    setFoco({ fila: 0, col: 0 });
     if (capsMode === "once") setCapsMode("off");
   };
 
@@ -77,151 +106,225 @@ function T9Keyboard({ onKey, onBackspace, onConfirm }) {
     });
   };
 
-  const capsLabel = capsMode === "off" ? "⇧" : capsMode === "once" ? "⇧¹" : "⇪";
-  const capsStyle = {
-    ...styles.letraKey,
-    background:
-      capsMode === "lock" ? "#111" : capsMode === "once" ? "#444" : "#ebebeb",
-    color: capsMode !== "off" ? "#fff" : "#111",
-    fontSize: "18px",
+  const abrirGrupo = (g) => {
+    setGrupoActivo(g);
+    setFoco({ fila: 0, col: 0 });
   };
 
-  // Vista: símbolos
-  if (mostrarSimbolos) {
-    return (
-      <div style={styles.board}>
-        <p style={styles.subTitle}>Elige un símbolo</p>
-        <div style={styles.letrasGrid}>
-          {simbolos.map((s) => (
-            <DwellKey
-              key={s}
-              onActivate={() => handleLetra(s)}
-              style={styles.letraKey}
-            >
-              {s}
-            </DwellKey>
-          ))}
-          <DwellKey
-            onActivate={() => setMostrarSimbolos(false)}
-            style={{ ...styles.letraKey, ...styles.cancelInGrid }}
-            dwellColor="#E24B4A"
-          >
-            ←
-          </DwellKey>
-        </div>
-      </div>
-    );
+  const abrirSimbolos = () => {
+    setMostrarSimbolos(true);
+    setFoco({ fila: 0, col: 0 });
+  };
+
+  const cerrarVista = () => {
+    setGrupoActivo(null);
+    setMostrarSimbolos(false);
+    setFoco({ fila: 0, col: 0 });
+  };
+
+  // ── Construcción de grillas por vista ───────────────────────────────────
+  function buildGridSimbolos() {
+    const filas = [];
+    for (let i = 0; i < simbolos.length; i += 4) {
+      filas.push(
+        simbolos.slice(i, i + 4).map((s) => ({
+          render: s,
+          onActivate: () => handleLetra(s),
+          style: styles.letraKey,
+        })),
+      );
+    }
+    filas.push([
+      {
+        render: "←",
+        onActivate: cerrarVista,
+        style: { ...styles.letraKey, ...styles.cancelInGrid },
+        dwellColor: "#E24B4A",
+      },
+    ]);
+    return filas;
   }
 
-  // Vista: letras del grupo
-  if (grupoActivo) {
-    return (
-      <div style={styles.board}>
-        <p style={styles.subTitle}>
-          Elige del grupo {grupoActivo.num}
-          {capsMode !== "off" && (
-            <span style={{ marginLeft: 8, fontSize: "11px", color: "#1D9E75" }}>
-              {capsMode === "once" ? "· próxima en mayúscula" : "· BLOQ MAYÚS"}
-            </span>
-          )}
-        </p>
-        <div style={styles.letrasGrid}>
-          {grupoActivo.letras.map((l) => (
-            <DwellKey
-              key={l}
-              onActivate={() => handleLetra(l)}
-              style={{
-                ...styles.letraKey,
-                ...(l === grupoActivo.num ? styles.letraNumKey : {}),
-              }}
-            >
-              {l === grupoActivo.num ? l : applyCase(l)}
-            </DwellKey>
-          ))}
-          <DwellKey
-            onActivate={handleCaps}
-            style={capsStyle}
-            dwellColor={capsMode !== "off" ? "#fff" : "#1D9E75"}
-          >
-            {capsLabel}
-          </DwellKey>
-          <DwellKey
-            onActivate={() => setGrupoActivo(null)}
-            style={{ ...styles.letraKey, ...styles.cancelInGrid }}
-            dwellColor="#E24B4A"
-          >
-            ←
-          </DwellKey>
-        </div>
-      </div>
-    );
+  function buildGridGrupo(g) {
+    const filaLetras = g.letras.map((l) => ({
+      render: l === g.num ? l : applyCase(l),
+      onActivate: () => handleLetra(l),
+      style: {
+        ...styles.letraKey,
+        ...(l === g.num ? styles.letraNumKey : {}),
+      },
+    }));
+
+    const capsLabel =
+      capsMode === "off" ? "⇧" : capsMode === "once" ? "⇧¹" : "⇪";
+    const capsStyle = {
+      ...styles.letraKey,
+      background:
+        capsMode === "lock" ? "#111" : capsMode === "once" ? "#444" : "#ebebeb",
+      color: capsMode !== "off" ? "#fff" : "#111",
+      fontSize: "18px",
+    };
+
+    const filaAcciones = [
+      {
+        render: capsLabel,
+        onActivate: handleCaps,
+        style: capsStyle,
+        dwellColor: capsMode !== "off" ? "#fff" : "#1D9E75",
+      },
+      {
+        render: "↩",
+        onActivate: cerrarVista,
+        style: { ...styles.letraKey, ...styles.cancelInGrid },
+        dwellColor: "#E24B4A",
+      },
+    ];
+
+    return [filaLetras, filaAcciones];
   }
 
-  // Vista: teclado principal
+  function buildGridPrincipal() {
+    const filasGrupos = [];
+    for (let i = 0; i < grupos.length; i += 3) {
+      filasGrupos.push(
+        grupos.slice(i, i + 3).map((g) => ({
+          render: (
+            <>
+              <span style={styles.grupoNum}>{g.num}</span>
+              <span style={styles.grupoLetras}>
+                {capsMode !== "off"
+                  ? g.letras.slice(1).join("").toUpperCase()
+                  : g.letras.slice(1).join("")}
+              </span>
+            </>
+          ),
+          onActivate: () => abrirGrupo(g),
+          style: styles.grupoKey,
+        })),
+      );
+    }
+
+    const filaAcciones = [
+      {
+        render: "⌫",
+        onActivate: onBackspace,
+        style: styles.accionKey,
+        dwellColor: "#E24B4A",
+      },
+      {
+        render: "@",
+        onActivate: () => onKey("@"),
+        style: { ...styles.accionKey, fontSize: "18px" },
+      },
+      {
+        render: ".com",
+        onActivate: () => onKey(".com"),
+        style: { ...styles.accionKey, fontSize: "12px" },
+      },
+    ];
+
+    const filaSimbolos = [
+      {
+        render: "!?# símbolos",
+        onActivate: abrirSimbolos,
+        style: { ...styles.accionKey, fontSize: "12px", gridColumn: "span 3" },
+      },
+    ];
+
+    const filaDominios = dominios.map((d) => ({
+      render: d,
+      onActivate: () => onKey(d),
+      style: styles.dominioKey,
+    }));
+
+    const filaConfirmar = [
+      {
+        render: "Confirmar →",
+        onActivate: onConfirm,
+        style: styles.confirmKey,
+      },
+    ];
+
+    return [
+      ...filasGrupos,
+      filaAcciones,
+      filaSimbolos,
+      filaDominios,
+      filaConfirmar,
+    ];
+  }
+
+  const grid = mostrarSimbolos
+    ? buildGridSimbolos()
+    : grupoActivo
+      ? buildGridGrupo(grupoActivo)
+      : buildGridPrincipal();
+
+  // ── Navegación por gestos ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!gesto) return;
+    const tipo = gesto.tipo ?? gesto;
+
+    if (tipo === "UP") setFoco((f) => clamp(grid, f.fila - 1, f.col));
+    if (tipo === "DOWN") setFoco((f) => clamp(grid, f.fila + 1, f.col));
+    if (tipo === "LEFT") setFoco((f) => clamp(grid, f.fila, f.col - 1));
+    if (tipo === "RIGHT") setFoco((f) => clamp(grid, f.fila, f.col + 1));
+
+    if (tipo === "CONFIRM") {
+      const ahora = Date.now();
+      if (ahora - ultimaConfirmacionRef.current < CONFIRM_COOLDOWN) return;
+      ultimaConfirmacionRef.current = ahora;
+
+      const celda = grid[foco.fila]?.[foco.col];
+      celda?.onActivate?.();
+    }
+  }, [gesto]);
+
+  // Si cambia el grid (nueva vista), recorta el foco a un rango válido
+  useEffect(() => {
+    setFoco((f) => clamp(grid, f.fila, f.col));
+  }, [grupoActivo, mostrarSimbolos]);
+
+  const subTitulo = mostrarSimbolos
+    ? "Elige un símbolo"
+    : grupoActivo
+      ? `Elige del grupo ${grupoActivo.num}${
+          capsMode !== "off"
+            ? capsMode === "once"
+              ? " · próxima en mayúscula"
+              : " · BLOQ MAYÚS"
+            : ""
+        }`
+      : null;
+
   return (
     <div style={styles.board}>
-      <div style={styles.grid}>
-        {grupos.map((g) => (
-          <DwellKey
-            key={g.num}
-            onActivate={() => setGrupoActivo(g)}
-            style={styles.grupoKey}
-          >
-            <span style={styles.grupoNum}>{g.num}</span>
-            <span style={styles.grupoLetras}>
-              {capsMode !== "off"
-                ? g.letras.slice(1).join("").toUpperCase()
-                : g.letras.slice(1).join("")}
-            </span>
-          </DwellKey>
-        ))}
+      {subTitulo && <p style={styles.subTitle}>{subTitulo}</p>}
 
-        <DwellKey
-          onActivate={onBackspace}
-          style={styles.accionKey}
-          dwellColor="#E24B4A"
-        >
-          ⌫
-        </DwellKey>
-        <DwellKey
-          onActivate={() => onKey("@")}
-          style={{ ...styles.accionKey, fontSize: "18px" }}
-        >
-          @
-        </DwellKey>
-        <DwellKey
-          onActivate={() => onKey(".com")}
-          style={{ ...styles.accionKey, fontSize: "12px" }}
-        >
-          .com
-        </DwellKey>
-        <DwellKey
-          onActivate={() => setMostrarSimbolos(true)}
-          style={{
-            ...styles.accionKey,
-            fontSize: "12px",
-            gridColumn: "span 3",
-          }}
-        >
-          !?# símbolos
-        </DwellKey>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            mostrarSimbolos || grupoActivo
+              ? "repeat(4, 1fr)"
+              : "repeat(3, 1fr)",
+          gap: "8px",
+        }}
+      >
+        {grid.map((fila, fi) =>
+          fila.map((celda, ci) => (
+            <DwellKey
+              key={`${fi}-${ci}`}
+              onActivate={celda.onActivate}
+              style={celda.style}
+              dwellColor={celda.dwellColor}
+              focused={foco.fila === fi && foco.col === ci}
+            >
+              {celda.render}
+            </DwellKey>
+          )),
+        )}
       </div>
-
-      <div style={styles.dominiosGrid}>
-        {dominios.map((d) => (
-          <DwellKey
-            key={d}
-            onActivate={() => onKey(d)}
-            style={styles.dominioKey}
-          >
-            {d}
-          </DwellKey>
-        ))}
-      </div>
-
-      <DwellKey onActivate={onConfirm} style={styles.confirmKey}>
-        Confirmar →
-      </DwellKey>
     </div>
   );
 }
@@ -238,11 +341,6 @@ const styles = {
     gap: "8px",
     boxSizing: "border-box",
   },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "8px",
-  },
   keyBase: {
     position: "relative",
     overflow: "hidden",
@@ -250,7 +348,7 @@ const styles = {
     border: "0.5px solid #ccc",
     background: "#fff",
     color: "#111",
-    cursor: "pointer",
+    cursor: "default",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -276,11 +374,6 @@ const styles = {
     fontSize: "15px",
     fontWeight: "500",
   },
-  dominiosGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "8px",
-  },
   dominioKey: {
     height: "36px",
     fontSize: "10px",
@@ -297,11 +390,6 @@ const styles = {
     fontWeight: "500",
     borderRadius: "10px",
   },
-  letrasGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: "8px",
-  },
   letraKey: {
     height: "60px",
     fontSize: "22px",
@@ -314,9 +402,9 @@ const styles = {
   },
   cancelInGrid: {
     background: "#ebebeb",
-    color: "#E24B4A",
+    color: "#555",
     fontSize: "18px",
-    border: "0.5px solid #E24B4A",
+    border: "0.5px solid #ccc",
   },
   subTitle: {
     fontSize: "13px",

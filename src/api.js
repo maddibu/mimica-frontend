@@ -54,3 +54,10 @@ export const subirDocumento = (nombre, tipo, ruta_archivo) =>
 
 export const eliminarDocumento = (id) =>
   apiFetch(`/api/documentos/${id}`, { method: "DELETE" });
+
+// ── Mapeos ────────────────────────────────────────────
+export const obtenerMapeos = (perfil_id) =>
+  apiFetch(`/api/mapeos?perfil_id=${perfil_id}`);
+
+// ── Perfiles ──────────────────────────────────────────
+export const obtenerPerfiles = () => apiFetch("/api/perfiles");

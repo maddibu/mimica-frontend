@@ -1,11 +1,17 @@
 import { useEffect, useRef, useCallback } from "react";
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
-const HOLD_TIME = 700;
-const PITCH_DOWN = 0.035;
-const PITCH_UP = -0.03;
-const SMILE_THRESHOLD = 0.1;
-const JAW_OPEN_THRESHOLD = 0.5;
+const UMBRALES = {
+  PITCH_DOWN: 0.08,
+  PITCH_UP: -0.08,
+  YAW: 0.25,
+  SMILE: 0.35,
+  JAW_OPEN: 0.1,
+  BROW_UP: 0.5,
+  CHEEK_PUFF: 0.1,
+  WINK: 0.3,
+  WINK_OPEN: 0.2,
+};
 
 function detectGestureFromResults(results) {
   const matrices = results.facialTransformationMatrixes;
@@ -16,6 +22,7 @@ function detectGestureFromResults(results) {
 
   const m = matrix.data;
   const pitch = Math.asin(Math.max(-1, Math.min(1, -m[9])));
+  const yaw = Math.asin(Math.max(-1, Math.min(1, m[1])));
 
   const categories = results.faceBlendshapes?.[0]?.categories ?? [];
   const get = (name) =>
@@ -24,16 +31,45 @@ function detectGestureFromResults(results) {
   const smileLeft = get("mouthSmileLeft");
   const smileRight = get("mouthSmileRight");
   const jawOpen = get("jawOpen");
+  const browInnerUp = get("browInnerUp");
+  const browOuterUpL = get("browOuterUpLeft");
+  const browOuterUpR = get("browOuterUpRight");
+  const cheekPuff = get("cheekPuff");
+  const eyeBlinkL = get("eyeBlinkLeft");
+  const eyeBlinkR = get("eyeBlinkRight");
 
-  if (pitch > PITCH_DOWN) return "HEAD_DOWN";
-  if (pitch < PITCH_UP) return "HEAD_UP";
-  if (smileRight > SMILE_THRESHOLD) return "HEAD_RIGHT";
-  if (smileLeft > SMILE_THRESHOLD) return "HEAD_LEFT";
-  if (jawOpen > JAW_OPEN_THRESHOLD) return "JAW_OPEN";
+  if (eyeBlinkR > UMBRALES.WINK && eyeBlinkL < UMBRALES.WINK_OPEN)
+    return "WINK_RIGHT";
+  if (eyeBlinkL > UMBRALES.WINK && eyeBlinkR < UMBRALES.WINK_OPEN)
+    return "WINK_LEFT";
+
+  // SMILE evaluado ANTES que JAW_OPEN y cabeza, para evitar falsos HEAD_DOWN
+  if (smileLeft > UMBRALES.SMILE && smileRight > UMBRALES.SMILE) return "SMILE";
+
+  if (jawOpen > UMBRALES.JAW_OPEN) return "JAW_OPEN";
+
+  // Yaw evaluado ANTES que pitch, para evitar falsos HEAD_DOWN al girar
+  if (yaw > UMBRALES.YAW) return "HEAD_RIGHT";
+  if (yaw < -UMBRALES.YAW) return "HEAD_LEFT";
+
+  if (pitch > UMBRALES.PITCH_DOWN) return "HEAD_DOWN";
+  if (pitch < UMBRALES.PITCH_UP) return "HEAD_UP";
+
+  const browsUp = (browInnerUp + browOuterUpL + browOuterUpR) / 3;
+  if (browsUp > UMBRALES.BROW_UP) return "BROW_UP";
+
+  if (cheekPuff > UMBRALES.CHEEK_PUFF) return "CHEEK_PUFF";
+
   return null;
 }
 
-export function useGestureDetection({ onGesture, enabled = true }) {
+// gestureMap: { NOMBRE_GESTO: NOMBRE_ACCION }
+// Si no se pasa, onGesture recibe el nombre crudo del gesto
+export function useGestureDetection({
+  onGesture,
+  gestureMap = null,
+  enabled = true,
+}) {
   const landmarkerRef = useRef(null);
   const animFrameRef = useRef(null);
   const gestureStateRef = useRef({
@@ -41,6 +77,12 @@ export function useGestureDetection({ onGesture, enabled = true }) {
     startTime: null,
     fired: false,
   });
+  const gestureMapRef = useRef(gestureMap);
+
+  // Mantiene la ref actualizada sin re-crear el loop
+  useEffect(() => {
+    gestureMapRef.current = gestureMap;
+  }, [gestureMap]);
 
   const handleResults = useCallback(
     (results) => {
@@ -59,9 +101,13 @@ export function useGestureDetection({ onGesture, enabled = true }) {
 
       if (detected && !state.fired) {
         const elapsed = now - state.startTime;
+        const HOLD_TIME = 700;
         if (elapsed >= HOLD_TIME) {
           gestureStateRef.current.fired = true;
-          onGesture?.(detected);
+
+          // Lookup en el mapa; si no hay mapa pasa el nombre crudo
+          const accion = gestureMapRef.current?.[detected] ?? detected;
+          onGesture?.(accion);
         }
       }
     },

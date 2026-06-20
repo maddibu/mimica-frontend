@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useGestureDetection } from "../hooks/useGestureDetection";
+import { useGesture } from "../context/GestureContext";
 
 function DwellButton({ style, hint, onClick, children, gesteFocused = false }) {
   const barRef = useRef(null);
@@ -47,9 +48,16 @@ function DwellButton({ style, hint, onClick, children, gesteFocused = false }) {
   );
 }
 
+const LANDING_GESTURES = {
+  HEAD_DOWN: "PAGE_NEXT",
+  HEAD_UP: "PAGE_PREV",
+  SMILE: "CONFIRM",
+};
+
 function Landing() {
   const navigate = useNavigate();
   const { token } = useAuth();
+  const { gestureMap } = useGesture(); // ← nuevo
   const [focusedIndex, setFocusedIndex] = useState(0);
   const BUTTON_COUNT = 2;
 
@@ -57,18 +65,34 @@ function Landing() {
     if (token) navigate("/dashboard");
   }, [token]);
 
-  const handleGesture = useCallback((gesture) => {
-    setFocusedIndex((prev) => {
-      const current = prev ?? 0; // empieza en 0 solo cuando llega el primer gesto
-      if (gesture === "HEAD_DOWN")
-        return Math.min(current + 1, BUTTON_COUNT - 1);
-      if (gesture === "HEAD_UP") return Math.max(current - 1, 0);
-      return current;
-    });
-  }, []);
+  const handleGesture = useCallback(
+    (accion) => {
+      if (accion === "CONFIRM") {
+        setFocusedIndex((current) => {
+          if (current === 0) navigate("/login");
+          if (current === 1)
+            navigate("/login", { state: { modo: "registrarse" } });
+          return current;
+        });
+        return;
+      }
 
-  useGestureDetection({ onGesture: handleGesture, enabled: true });
+      setFocusedIndex((prev) => {
+        const current = prev ?? 0;
+        if (accion === "PAGE_PREV") return Math.max(current - 1, 0);
+        if (accion === "PAGE_NEXT")
+          return Math.min(current + 1, BUTTON_COUNT - 1);
+        return current;
+      });
+    },
+    [navigate],
+  );
 
+  useGestureDetection({
+    onGesture: handleGesture,
+    gestureMap: LANDING_GESTURES,
+    enabled: true,
+  });
   return (
     <div style={styles.page}>
       <div style={styles.main}>

@@ -3,132 +3,22 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { login as apiLogin, register as apiRegister } from "../api";
 import { useAuth } from "../context/AuthContext";
-import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
+import { useGestureDetection } from "../hooks/useGestureDetection";
 import T9Keyboard from "../components/T9Keyboard";
 
-// ── Gestos ──────────────────────────────────────────────────────────────────
-const HOLD_TIME = 700;
-const PITCH_DOWN = 0.03;
-const PITCH_UP = -0.03;
-const SMILE_THRESHOLD = 0.1;
-
-function getPitchSmile(matrix, blendshapes) {
-  if (!matrix?.data) return null;
-  const m = matrix.data;
-  const pitch = Math.asin(Math.max(-1, Math.min(1, -m[9])));
-  const categories = blendshapes?.[0]?.categories ?? [];
-  const get = (name) =>
-    categories.find((c) => c.categoryName === name)?.score ?? 0;
-  const smileLeft = get("mouthSmileLeft");
-  const smileRight = get("mouthSmileRight");
-  return { pitch, smileLeft, smileRight };
-}
-
-function useHeadGesture({ onGesture, enabled = true }) {
-  const landmarkerRef = useRef(null);
-  const animFrameRef = useRef(null);
-  const gestureStateRef = useRef({
-    current: null,
-    startTime: null,
-    fired: false,
-  });
-
-  const handleResults = useCallback(
-    (results) => {
-      const matrices = results.facialTransformationMatrixes;
-      if (!matrices?.length) return;
-      const poseData = getPitchSmile(matrices[0], results.faceBlendshapes);
-      if (!poseData) return;
-      const { pitch, smileLeft, smileRight } = poseData;
-
-      let detected = null;
-      if (pitch > PITCH_DOWN) detected = "HEAD_DOWN";
-      else if (pitch < PITCH_UP) detected = "HEAD_UP";
-      else if (smileRight > SMILE_THRESHOLD) detected = "HEAD_RIGHT";
-      else if (smileLeft > SMILE_THRESHOLD) detected = "HEAD_LEFT";
-
-      const state = gestureStateRef.current;
-      const now = Date.now();
-      if (detected !== state.current) {
-        gestureStateRef.current = {
-          current: detected,
-          startTime: detected ? now : null,
-          fired: false,
-        };
-        return;
-      }
-      if (detected && !state.fired && now - state.startTime >= HOLD_TIME) {
-        gestureStateRef.current.fired = true;
-        onGesture?.(detected);
-      }
-    },
-    [onGesture],
-  );
-
-  useEffect(() => {
-    if (!enabled) return;
-    let stopped = false;
-    const video = document.createElement("video");
-    video.style.cssText =
-      "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;";
-    document.body.appendChild(video);
-
-    async function init() {
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm",
-      );
-      const landmarker = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-          delegate: "GPU",
-        },
-        outputFacialTransformationMatrixes: true,
-        outputFaceBlendshapes: true,
-        runningMode: "VIDEO",
-        numFaces: 1,
-      });
-      if (stopped) {
-        landmarker.close();
-        return;
-      }
-      landmarkerRef.current = landmarker;
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 320, height: 240, facingMode: "user" },
-      });
-      video.srcObject = stream;
-      await video.play();
-
-      let lastTime = -1;
-      function detect() {
-        if (stopped) return;
-        if (video.currentTime !== lastTime) {
-          lastTime = video.currentTime;
-          const results = landmarker.detectForVideo(video, performance.now());
-          handleResults(results);
-        }
-        animFrameRef.current = requestAnimationFrame(detect);
-      }
-      animFrameRef.current = requestAnimationFrame(detect);
-    }
-
-    init().catch((err) => console.error("[Mímica] FaceLandmarker error:", err));
-
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(animFrameRef.current);
-      landmarkerRef.current?.close();
-      if (video.srcObject) video.srcObject.getTracks().forEach((t) => t.stop());
-      document.body.removeChild(video);
-    };
-  }, [enabled, handleResults]);
-}
+// ── Mapa de gestos para esta página ──────────────────────────────────────────
+const LOGIN_GESTURES = {
+  HEAD_DOWN: "DOWN",
+  HEAD_UP: "UP",
+  HEAD_RIGHT: "RIGHT",
+  HEAD_LEFT: "LEFT",
+  SMILE: "CONFIRM",
+};
 
 // ── Grafo de navegación ──────────────────────────────────────────────────────
-function buildGraph(modo) {
+function buildGraph(modo, savedCount = 0) {
   if (modo === "ingresar") {
-    return {
+    const graph = {
       "tab-ingresar": {
         right: "tab-registrarse",
         down: "email",
@@ -150,13 +40,29 @@ function buildGraph(modo) {
         right: null,
       },
       "link-forgot": {
-        down: "btn-guest",
+        down: savedCount > 0 ? "saved-0" : "btn-guest",
         up: "btn-submit",
         left: null,
         right: null,
       },
-      "btn-guest": { up: "link-forgot", down: null, left: null, right: null },
+      "btn-guest": {
+        up: savedCount > 0 ? `saved-${savedCount - 1}` : "link-forgot",
+        down: null,
+        left: null,
+        right: null,
+      },
     };
+
+    for (let i = 0; i < savedCount; i++) {
+      graph[`saved-${i}`] = {
+        left: i > 0 ? `saved-${i - 1}` : null,
+        right: i < savedCount - 1 ? `saved-${i + 1}` : null,
+        up: "link-forgot",
+        down: "btn-guest",
+      };
+    }
+
+    return graph;
   }
   return {
     "tab-ingresar": {
@@ -179,6 +85,9 @@ function buildGraph(modo) {
   };
 }
 
+// Nodos que al recibir CONFIRM disparan una acción concreta
+const CAMPOS_TEXTO = new Set(["nombre", "email", "pass"]);
+
 // ── DwellButton ──────────────────────────────────────────────────────────────
 function DwellButton({ style, hint, onClick, children, focused }) {
   const barRef = useRef(null);
@@ -186,9 +95,9 @@ function DwellButton({ style, hint, onClick, children, focused }) {
 
   const startDwell = () => {
     if (!barRef.current) return;
-    barRef.current.style.transition = "width 2s linear";
+    barRef.current.style.transition = "width 7s linear";
     barRef.current.style.width = "100%";
-    timerRef.current = setTimeout(() => onClick(), 2000);
+    timerRef.current = setTimeout(() => onClick(), 7000);
   };
   const stopDwell = () => {
     if (!barRef.current) return;
@@ -223,6 +132,57 @@ function DwellButton({ style, hint, onClick, children, focused }) {
   );
 }
 
+// ── SavedUserCard (inicio de sesión rápido) ──────────────────────────────────
+function SavedUserCard({ usuario, index, focused, onSelect, onRemove }) {
+  const barRef = useRef(null);
+  const timerRef = useRef(null);
+
+  const start = () => {
+    if (!barRef.current) return;
+    barRef.current.style.transition = "width 7s linear";
+    barRef.current.style.width = "100%";
+    timerRef.current = setTimeout(() => onSelect(), 7000);
+  };
+
+  const stop = () => {
+    if (!barRef.current) return;
+    barRef.current.style.transition = "none";
+    barRef.current.style.width = "0%";
+    clearTimeout(timerRef.current);
+  };
+
+  useEffect(() => {
+    if (focused) start();
+    else stop();
+    return () => clearTimeout(timerRef.current);
+  }, [focused]);
+
+  return (
+    <div
+      style={{
+        ...styles.savedCard,
+        outline: focused ? "2px solid #1D9E75" : "none",
+        outlineOffset: focused ? "1px" : "0",
+      }}
+    >
+      <div style={styles.savedAvatar}>{index + 1}</div>
+      <span style={styles.savedName}>
+        {usuario.nombre?.split(" ")[0] || "Usuario"}
+      </span>
+      <button
+        style={styles.savedRemove}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove(usuario.id_usuario);
+        }}
+      >
+        ×
+      </button>
+      <div ref={barRef} style={styles.savedDwell} />
+    </div>
+  );
+}
+
 // ── Login ────────────────────────────────────────────────────────────────────
 function Login() {
   const location = useLocation();
@@ -235,6 +195,29 @@ function Login() {
   const [cargando, setCargando] = useState(false);
   const [focusedEl, setFocusedEl] = useState("tab-ingresar");
   const [activeField, setActiveField] = useState(null);
+
+  const MAX_SAVED = 3;
+  const getSavedUsers = () => {
+    try {
+      return JSON.parse(localStorage.getItem("mimica_saved_users") || "[]");
+    } catch {
+      return [];
+    }
+  };
+  const saveUser = (usuario) => {
+    const saved = getSavedUsers();
+    const exists = saved.findIndex((u) => u.id_usuario === usuario.id_usuario);
+    if (exists !== -1) saved.splice(exists, 1);
+    saved.unshift(usuario);
+    if (saved.length > MAX_SAVED) saved.length = MAX_SAVED;
+    localStorage.setItem("mimica_saved_users", JSON.stringify(saved));
+  };
+  const removeSavedUser = (id) => {
+    const saved = getSavedUsers().filter((u) => u.id_usuario !== id);
+    localStorage.setItem("mimica_saved_users", JSON.stringify(saved));
+    setSavedUsers(saved);
+  };
+  const [savedUsers, setSavedUsers] = useState(getSavedUsers);
 
   const handleModoChange = (nuevoModo) => {
     setModo(nuevoModo);
@@ -256,6 +239,7 @@ function Login() {
           ? await apiLogin(valores.email, valores.pass)
           : await apiRegister(valores.nombre, valores.email, valores.pass);
       guardarSesion(data.token, data.usuario);
+      saveUser(data.usuario);
       navigate("/dashboard");
     } catch (e) {
       setError(e.message);
@@ -279,29 +263,70 @@ function Login() {
 
   const handleT9Confirm = () => setActiveField(null);
 
-  const handleGesture = useCallback(
-    (gesture) => {
-      // Si hay teclado abierto, HEAD_DOWN cierra el teclado
-      if (activeField) {
-        if (gesture === "HEAD_DOWN") setActiveField(null);
+  // Activa la acción correspondiente al nodo enfocado
+  const activarNodo = useCallback(
+    (nodo) => {
+      if (CAMPOS_TEXTO.has(nodo)) {
+        setActiveField(nodo);
         return;
       }
-      const graph = buildGraph(modo);
-      const node = graph[focusedEl];
-      if (!node) return;
-      const dirMap = {
-        HEAD_DOWN: "down",
-        HEAD_UP: "up",
-        HEAD_RIGHT: "right",
-        HEAD_LEFT: "left",
-      };
-      const nextEl = node[dirMap[gesture]];
-      if (nextEl) setFocusedEl(nextEl);
+      if (nodo.startsWith("saved-")) {
+        const index = parseInt(nodo.replace("saved-", ""), 10);
+        const usuario = savedUsers[index];
+        if (usuario) {
+          setError("Ingresa tu contraseña para continuar.");
+          setValores((prev) => ({
+            ...prev,
+            email: usuario.correo || usuario.email || "",
+          }));
+          setFocusedEl("pass");
+        }
+        return;
+      }
+      if (nodo === "tab-ingresar") return handleModoChange("ingresar");
+      if (nodo === "tab-registrarse") return handleModoChange("registrarse");
+      if (nodo === "btn-submit") return handleSubmit();
+      if (nodo === "link-forgot") return navigate("/forgot-password");
+      if (nodo === "btn-guest") return navigate("/dashboard");
     },
-    [focusedEl, modo, activeField],
+    [modo, valores, navigate, savedUsers],
   );
 
-  useHeadGesture({ onGesture: handleGesture, enabled: true });
+  const [gestoTeclado, setGestoTeclado] = useState(null);
+
+  const handleGesture = useCallback(
+    (accion) => {
+      if (activeField) {
+        if (accion === "BROW_UP") {
+          setActiveField(null);
+          return;
+        }
+        // Reenvía el gesto al teclado con timestamp único
+        setGestoTeclado({ tipo: accion, ts: Date.now() });
+        return;
+      }
+
+      const graph = buildGraph(modo, savedUsers.length);
+      const node = graph[focusedEl];
+      if (!node) return;
+
+      if (accion === "CONFIRM") {
+        activarNodo(focusedEl);
+        return;
+      }
+
+      const dirMap = { UP: "up", DOWN: "down", LEFT: "left", RIGHT: "right" };
+      const nextEl = node[dirMap[accion]];
+      if (nextEl) setFocusedEl(nextEl);
+    },
+    [focusedEl, modo, activeField, activarNodo, savedUsers],
+  );
+
+  useGestureDetection({
+    onGesture: handleGesture,
+    gestureMap: LOGIN_GESTURES,
+    enabled: true,
+  });
 
   const fieldFocused = (id) => focusedEl === id;
 
@@ -309,7 +334,6 @@ function Login() {
     <div style={styles.page}>
       <h1 style={styles.title}>Mímica</h1>
 
-      {/* Tabs */}
       <div style={styles.tabs}>
         {["ingresar", "registrarse"].map((tab) => (
           <button
@@ -335,7 +359,6 @@ function Login() {
         ))}
       </div>
 
-      {/* Formulario */}
       <div style={styles.form}>
         {modo === "registrarse" && (
           <div style={styles.field}>
@@ -427,7 +450,7 @@ function Login() {
 
         <DwellButton
           style={{ ...styles.btnSubmit, opacity: cargando ? 0.6 : 1 }}
-          hint="Mantén la mirada 2 s para confirmar"
+          hint="Mantén la mirada 2 s o sonríe para confirmar"
           focused={fieldFocused("btn-submit")}
           onClick={handleSubmit}
         >
@@ -440,7 +463,11 @@ function Login() {
 
         {modo === "ingresar" && (
           <a
-            onClick={() => navigate("/forgot-password")}
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/forgot-password");
+            }}
             style={{
               ...styles.link,
               outline: fieldFocused("link-forgot")
@@ -458,13 +485,38 @@ function Login() {
         )}
       </div>
 
-      {/* Teclado T9 */}
       {activeField && (
         <T9Keyboard
           onKey={handleT9Key}
           onBackspace={handleT9Backspace}
           onConfirm={handleT9Confirm}
+          gesto={gestoTeclado}
         />
+      )}
+
+      {savedUsers.length > 0 && (
+        <div style={styles.savedSection}>
+          <span style={styles.savedLabel}>Acceso rápido</span>
+          <div style={styles.savedRow}>
+            {savedUsers.map((u, i) => (
+              <SavedUserCard
+                key={u.id_usuario}
+                usuario={u}
+                index={i}
+                focused={fieldFocused(`saved-${i}`)}
+                onSelect={() => {
+                  setError("Ingresa tu contraseña para continuar.");
+                  setValores((prev) => ({
+                    ...prev,
+                    email: u.correo || u.email || "",
+                  }));
+                  setFocusedEl("pass");
+                }}
+                onRemove={removeSavedUser}
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       <div style={styles.divider}>
@@ -629,6 +681,83 @@ const styles = {
   },
   dividerLine: { flex: 1, height: "0.5px", background: "#e0e0e0" },
   dividerText: { fontSize: "12px", color: "#999" },
+  savedSection: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "10px",
+    width: "380px",
+  },
+  savedLabel: {
+    fontSize: "11px",
+    color: "#999",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    alignSelf: "flex-start",
+  },
+  savedRow: {
+    display: "flex",
+    gap: "12px",
+    width: "100%",
+  },
+  savedCard: {
+    flex: 1,
+    position: "relative",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "8px",
+    padding: "1.25rem 0.5rem 1rem",
+    border: "0.5px solid #e0e0e0",
+    borderRadius: "12px",
+    background: "#fff",
+    cursor: "pointer",
+    boxSizing: "border-box",
+  },
+  savedAvatar: {
+    width: "52px",
+    height: "52px",
+    borderRadius: "50%",
+    background: "#111",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "22px",
+    fontWeight: "500",
+  },
+  savedName: {
+    fontSize: "13px",
+    fontWeight: "500",
+    color: "#111",
+    textAlign: "center",
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  savedRemove: {
+    position: "absolute",
+    top: "6px",
+    right: "8px",
+    background: "none",
+    border: "none",
+    fontSize: "16px",
+    color: "#bbb",
+    cursor: "pointer",
+    lineHeight: 1,
+    padding: 0,
+  },
+  savedDwell: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    height: "3px",
+    width: "0%",
+    background: "#1D9E75",
+    borderRadius: "0 0 12px 12px",
+  },
 };
 
 export default Login;
